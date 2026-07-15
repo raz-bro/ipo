@@ -1,0 +1,11 @@
+services:
+  ipo-bot:
+    build: .
+    container_name: ipo_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./database:/app/database
+      - ./exports:/app/exports

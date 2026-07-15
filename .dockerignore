@@ -1,0 +1,8 @@
+.env
+logs/*
+database/*
+exports/*
+__pycache__/
+*.pyc
+.git
+.gitignore

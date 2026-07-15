@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+logs/*.log*
+exports/*.csv
+!logs/.gitkeep
+
+# NOTE: database/*.db is intentionally tracked, NOT ignored, if you're using
+# the GitHub Actions hosting path (.github/workflows/ipo-bot.yml) -- that
+# workflow commits database/ipo_bot.db back to the repo after every run
+# because it's the only way to persist state across ephemeral CI runners.
+# If you are instead running main.py on a VPS/Pi/Docker host where the
+# database lives on local disk, you can safely add "database/*.db" back to
+# this file.
