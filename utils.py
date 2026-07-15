@@ -290,6 +290,31 @@ def find_best_table(
     return best_table
 
 
+def find_matching_tables(
+    tables: Sequence[pd.DataFrame],
+    required_keyword_groups: Sequence[Sequence[str]],
+    min_score: int = 1,
+) -> List[pd.DataFrame]:
+    """Like ``find_best_table``, but returns every table that scores at
+    least ``min_score`` instead of only the single best one.
+
+    Some sites (e.g. Groww's IPO page) split the same kind of data across
+    several separate tables on one page (Open / Upcoming / Closed IPOs).
+    Picking only "the best" table would silently drop the others.
+    """
+    matches: List[pd.DataFrame] = []
+    for table in tables:
+        headers = " | ".join(str(c).lower() for c in table.columns)
+        score = sum(
+            1
+            for group in required_keyword_groups
+            if any(keyword in headers for keyword in group)
+        )
+        if score >= min_score:
+            matches.append(table)
+    return matches
+
+
 def match_column(columns: Sequence[str], keywords: Sequence[str]) -> Optional[str]:
     """Find the first column whose (lowercased) name contains any keyword."""
     for col in columns:

@@ -36,9 +36,13 @@ ipo_bot/
 
 Every `POLL_INTERVAL_MINUTES` (default **10**), the bot:
 
-1. Scrapes the latest Mainboard + SME IPO lists from Chittorgarh.
+1. Scrapes the latest Mainboard + SME IPO lists from Groww (confirmed
+   reachable; Chittorgarh is also attempted and merged in, but is
+   currently blocked by anti-bot protection -- see note below).
 2. Scrapes the latest GMP table from InvestorGain (falls back to IPO Watch
-   if that fails).
+   if that fails). **Currently both of these GMP sources are blocked/dead**
+   (see note below) -- GMP fields will show "N/A" until a working GMP
+   source is configured.
 3. Upserts each IPO into the `ipo` table. A row that didn't exist before
    triggers a **🚀 NEW IPO DETECTED** alert.
 4. Matches each IPO to its GMP quote (fuzzy name matching, since sources
@@ -74,6 +78,19 @@ keyword lists near the top of `scraper.py` / `gmp.py` (or the URLs in
 `.env`) if a source goes stale long-term. If a source starts returning
 HTTP 403, it means that site is actively blocking automated requests; you
 may need to source a different URL/mirror or add cookies/proxies yourself.
+
+**Known status as of writing:** Chittorgarh and InvestorGain both return
+HTTP 403 (Cloudflare/WAF blocking scripted requests outright — not a
+parsing problem, the request never gets real HTML back), and IPO Watch's
+GMP URL returns 404 (page moved). **Groww (`groww.in/ipo`) is confirmed
+reachable** and is used as the primary IPO-listing source — it splits IPOs
+across three tables on one page (Open/Upcoming/Closed), which
+`scraper.py`'s `find_matching_tables` handles by parsing and merging all of
+them rather than picking just one. Groww doesn't publish GMP, lot size,
+issue size, registrar, or allotment date, though, so those fields will be
+blank/"N/A" until a working, scrapeable GMP source is found and wired into
+`gmp.py` (contributions/config updates welcome — check `GMP_*_URL` in
+`.env` once you find one that works from your network).
 
 ## Installation
 

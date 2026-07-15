@@ -118,6 +118,9 @@ class Settings:
     )
 
     # --- Data sources -------------------------------------------------------
+    groww_ipo_url: str = field(
+        default_factory=lambda: os.getenv("GROWW_IPO_URL", "https://groww.in/ipo")
+    )
     chittorgarh_mainboard_url: str = field(
         default_factory=lambda: os.getenv(
             "CHITTORGARH_MAINBOARD_URL",
