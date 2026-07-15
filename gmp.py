@@ -54,7 +54,11 @@ class GMPScraper:
     """Fetches the latest GMP table, trying sources in priority order."""
 
     def fetch_all(self) -> List[GMPQuote]:
-        for url in (settings.investorgain_gmp_url, settings.ipowatch_gmp_url):
+        # IPO Watch is tried first -- confirmed reachable. InvestorGain is
+        # kept as a second attempt (costs nothing extra if IPO Watch
+        # succeeds) in case it comes back online or InvestorGain has an IPO
+        # IPO Watch is missing.
+        for url in (settings.ipowatch_gmp_url, settings.investorgain_gmp_url):
             quotes = self._fetch_source(url)
             if quotes:
                 return quotes

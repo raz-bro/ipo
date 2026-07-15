@@ -58,6 +58,13 @@ _GROWW_KEYWORD_GROUPS: Sequence[Sequence[str]] = (
     ("close date",),
 )
 
+# Groww's "Closed IPOs" table carries these columns (listing price /
+# performance) that its "Open"/"Upcoming" tables don't. We only want IPOs
+# that are currently open or upcoming for "new IPO" alerts -- a company
+# that already listed weeks ago isn't news -- so any table with these
+# columns is skipped entirely.
+_GROWW_CLOSED_TABLE_MARKERS: Sequence[str] = ("listing price", "performance")
+
 # Keyword lists used to map a table's columns to our internal fields.
 _FIELD_KEYWORDS: Dict[str, Sequence[str]] = {
     "company_name": ("ipo name", "company", "issuer", "ipo"),
@@ -134,6 +141,10 @@ class IPOScraper:
 
         records: List[IPORecord] = []
         for table in matching_tables:
+            headers = " | ".join(str(c).lower() for c in table.columns)
+            if any(marker in headers for marker in _GROWW_CLOSED_TABLE_MARKERS):
+                continue  # skip the "Closed IPOs" table -- already listed, not news
+
             column_map = build_column_map(list(table.columns), _FIELD_KEYWORDS)
             if "company_name" not in column_map:
                 continue

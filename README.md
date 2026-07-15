@@ -39,10 +39,8 @@ Every `POLL_INTERVAL_MINUTES` (default **10**), the bot:
 1. Scrapes the latest Mainboard + SME IPO lists from Groww (confirmed
    reachable; Chittorgarh is also attempted and merged in, but is
    currently blocked by anti-bot protection -- see note below).
-2. Scrapes the latest GMP table from InvestorGain (falls back to IPO Watch
-   if that fails). **Currently both of these GMP sources are blocked/dead**
-   (see note below) -- GMP fields will show "N/A" until a working GMP
-   source is configured.
+2. Scrapes the latest GMP table from IPO Watch (falls back to InvestorGain
+   if that fails; InvestorGain is currently blocked -- see note below).
 3. Upserts each IPO into the `ipo` table. A row that didn't exist before
    triggers a **🚀 NEW IPO DETECTED** alert.
 4. Matches each IPO to its GMP quote (fuzzy name matching, since sources
@@ -81,16 +79,24 @@ may need to source a different URL/mirror or add cookies/proxies yourself.
 
 **Known status as of writing:** Chittorgarh and InvestorGain both return
 HTTP 403 (Cloudflare/WAF blocking scripted requests outright — not a
-parsing problem, the request never gets real HTML back), and IPO Watch's
-GMP URL returns 404 (page moved). **Groww (`groww.in/ipo`) is confirmed
-reachable** and is used as the primary IPO-listing source — it splits IPOs
-across three tables on one page (Open/Upcoming/Closed), which
-`scraper.py`'s `find_matching_tables` handles by parsing and merging all of
-them rather than picking just one. Groww doesn't publish GMP, lot size,
-issue size, registrar, or allotment date, though, so those fields will be
-blank/"N/A" until a working, scrapeable GMP source is found and wired into
-`gmp.py` (contributions/config updates welcome — check `GMP_*_URL` in
-`.env` once you find one that works from your network).
+parsing problem, the request never gets real HTML back). **Groww
+(`groww.in/ipo`) and IPO Watch (`ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/`)
+are both confirmed reachable** and are used as the primary sources —
+Groww for listings (it splits IPOs across three tables on one page,
+Open/Upcoming/Closed; `scraper.py` only keeps the Open/Upcoming ones —
+already-closed IPOs aren't "news" so they're deliberately excluded from
+"new IPO" alerts) and IPO Watch for GMP. Groww doesn't publish lot size,
+issue size, registrar, or allotment date, so those fields stay blank/"N/A"
+for now regardless of GMP working. If either of these also goes stale one
+day, the same generic table-matching approach applies -- check
+`logs/app.log` for `"Could not identify the"` warnings and update the
+keyword lists / URLs as described above.
+
+One more thing worth knowing: `pandas.read_html` doesn't always detect a
+proper header row (some sites don't use `<thead>`/`<th>` markup), which
+silently produced blank/no-match tables during testing. `extract_tables`
+in `utils.py` now detects and fixes that case automatically (promotes row
+0 to the header when `read_html` returns plain positional column names).
 
 ## Installation
 

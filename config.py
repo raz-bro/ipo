@@ -142,7 +142,7 @@ class Settings:
     ipowatch_gmp_url: str = field(
         default_factory=lambda: os.getenv(
             "IPOWATCH_GMP_URL",
-            "https://ipowatch.in/ipo-grey-market-premium-latest-gmp/",
+            "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/",
         )
     )
 

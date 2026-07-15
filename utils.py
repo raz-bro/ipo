@@ -255,10 +255,29 @@ def extract_tables(html: str) -> List[pd.DataFrame]:
     to markup churn than hardcoded selectors.
     """
     try:
-        return pd.read_html(io.StringIO(html))
+        tables = pd.read_html(io.StringIO(html))
     except ValueError:
         # No tables found on the page at all.
         return []
+    return [_promote_header_row_if_needed(t) for t in tables]
+
+
+def _promote_header_row_if_needed(table: pd.DataFrame) -> pd.DataFrame:
+    """Fix a common pandas.read_html quirk: some sites' tables don't use
+    proper <th>/<thead> markup, so pandas fails to detect a header row and
+    returns plain integer column names (0, 1, 2, ...) with the real header
+    text sitting in the first data row instead. Detect that case and
+    promote row 0 to be the header.
+    """
+    columns_are_positional = all(
+        isinstance(col, int) or (isinstance(col, str) and col.isdigit())
+        for col in table.columns
+    )
+    if not columns_are_positional or table.empty:
+        return table
+
+    new_columns = table.iloc[0].astype(str)
+    return table.iloc[1:].set_axis(new_columns, axis=1).reset_index(drop=True)
 
 
 def find_best_table(
