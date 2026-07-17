@@ -18,25 +18,54 @@ from utils import logger, parse_price_band, retry
 
 
 class TelegramNotifier:
-    """Sends formatted alerts to a single Telegram chat via Bot API."""
+    """Sends formatted alerts to one or more Telegram chats via Bot API.
 
-    def __init__(self, bot_token: Optional[str] = None, chat_id: Optional[str] = None) -> None:
+    Supports multiple recipients (e.g. your personal DM plus a group chat)
+    via ``settings.chat_ids`` -- a message is sent to every configured chat
+    id independently, so one recipient failing (e.g. the bot got removed
+    from a group) doesn't block delivery to the others.
+    """
+
+    def __init__(
+        self, bot_token: Optional[str] = None, chat_ids: Optional[List[str]] = None
+    ) -> None:
         self.bot_token = bot_token or settings.bot_token
-        self.chat_id = chat_id or settings.chat_id
+        self.chat_ids = chat_ids if chat_ids is not None else settings.chat_ids
         self._api_url = f"{settings.telegram_api_base}/bot{self.bot_token}/sendMessage"
 
     # ------------------------------------------------------------------
     # Low-level send
     # ------------------------------------------------------------------
-    @retry(exceptions=(requests.RequestException,))
     def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
-        """Send a message, handling Telegram's 429 rate limiting.
+        """Send a message to every configured chat id.
+
+        Returns True if delivery succeeded to at least one recipient (so a
+        single broken recipient, e.g. the bot losing group access, doesn't
+        prevent the notification from being marked as sent and cause it to
+        be re-sent every cycle to the recipients that DO still work).
+        """
+        if not self.chat_ids:
+            logger.error("No CHAT_ID configured, cannot send Telegram message")
+            return False
+
+        any_success = False
+        for chat_id in self.chat_ids:
+            try:
+                if self._send_to_chat(chat_id, text, parse_mode):
+                    any_success = True
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to send Telegram message to chat %s", chat_id)
+        return any_success
+
+    @retry(exceptions=(requests.RequestException,))
+    def _send_to_chat(self, chat_id: str, text: str, parse_mode: str) -> bool:
+        """Send to a single chat id, handling Telegram's 429 rate limiting.
 
         Returns True on success, False if Telegram permanently rejected the
         request (e.g. bad chat id) -- those are not worth retrying forever.
         """
         payload = {
-            "chat_id": self.chat_id,
+            "chat_id": chat_id,
             "text": text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True,
@@ -50,11 +79,11 @@ class TelegramNotifier:
             raise requests.RequestException("Rate limited by Telegram (429)")
 
         if response.status_code == 400:
-            logger.error("Telegram rejected message (400): %s", response.text)
+            logger.error("Telegram rejected message for chat %s (400): %s", chat_id, response.text)
             return False
 
         response.raise_for_status()
-        logger.info("Telegram message sent (%d chars)", len(text))
+        logger.info("Telegram message sent to %s (%d chars)", chat_id, len(text))
         return True
 
     # ------------------------------------------------------------------

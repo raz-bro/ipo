@@ -58,7 +58,11 @@ class Settings:
 
     # --- Telegram -----------------------------------------------------
     bot_token: str = field(default_factory=lambda: os.getenv("BOT_TOKEN", ""))
-    chat_id: str = field(default_factory=lambda: os.getenv("CHAT_ID", ""))
+    # Comma-separated list of chat/group ids, e.g. "2130410609,-1001234567890".
+    # A single id (no comma) works too -- kept for backward compatibility.
+    chat_ids: List[str] = field(
+        default_factory=lambda: _get_list("CHAT_ID", [])
+    )
     telegram_api_base: str = field(
         default_factory=lambda: os.getenv(
             "TELEGRAM_API_BASE", "https://api.telegram.org"
@@ -160,7 +164,7 @@ class Settings:
         missing = []
         if not self.bot_token:
             missing.append("BOT_TOKEN")
-        if not self.chat_id:
+        if not self.chat_ids:
             missing.append("CHAT_ID")
         if missing:
             raise RuntimeError(

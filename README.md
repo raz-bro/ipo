@@ -145,6 +145,12 @@ Alternative (works for groups/channels too):
 4. Find `"chat":{"id": ...}` in the JSON response — that number is your
    `CHAT_ID` (group/channel IDs are usually negative, that's expected).
 
+**Notifying more than one chat:** `CHAT_ID` accepts a comma-separated list,
+e.g. `CHAT_ID=2130410609,-1001234567890` sends every alert to both your
+personal DM and a group. Each chat id is sent to independently, so if the
+bot ever loses access to one (e.g. removed from a group), the others still
+get every alert.
+
 ## Running
 
 ```bash
