@@ -141,34 +141,60 @@ class Database:
             rows = conn.execute("SELECT * FROM ipo ORDER BY created_at DESC").fetchall()
         return [self._row_to_record(r) for r in rows]
 
+    # Fields compared to decide whether an existing IPO row actually changed.
+    # last_updated/created_at/id are deliberately excluded -- they're not
+    # "content", and touching last_updated on a no-op cycle would make the
+    # database file (and the GitHub Actions commit that persists it) churn
+    # every single cycle even when nothing about the IPO actually changed.
+    _COMPARABLE_FIELDS = (
+        "company_name", "ipo_type", "price_band", "lot_size", "issue_size",
+        "open_date", "close_date", "listing_date", "allotment_date",
+        "registrar", "exchange", "current_gmp", "gmp_change", "kostak",
+        "subject_to_sauda", "source_url",
+    )
+
     def upsert_ipo(self, record: IPORecord) -> IPORecord:
         """Insert a new IPO or update an existing one by ipo_name.
+
+        If an existing row's content is identical to the incoming record,
+        no UPDATE is executed at all (not even a no-op one) -- SQLite bumps
+        internal file metadata on every write transaction regardless of
+        whether any column value actually changed, so skipping the write
+        entirely (rather than just skipping which columns get set) is what
+        keeps the database file byte-identical across a no-change cycle.
 
         Returns the persisted record (with its id populated).
         """
         existing = self.get_ipo_by_name(record.ipo_name)
         with self._connect() as conn:
             if existing:
-                conn.execute(
-                    """
-                    UPDATE ipo SET
-                        company_name = ?, ipo_type = ?, price_band = ?,
-                        lot_size = ?, issue_size = ?, open_date = ?,
-                        close_date = ?, listing_date = ?, allotment_date = ?,
-                        registrar = ?, exchange = ?, current_gmp = ?,
-                        gmp_change = ?, kostak = ?, subject_to_sauda = ?,
-                        source_url = ?, last_updated = ?
-                    WHERE ipo_name = ?
-                    """,
-                    (
-                        record.company_name, record.ipo_type, record.price_band,
-                        record.lot_size, record.issue_size, record.open_date,
-                        record.close_date, record.listing_date, record.allotment_date,
-                        record.registrar, record.exchange, record.current_gmp,
-                        record.gmp_change, record.kostak, record.subject_to_sauda,
-                        record.source_url, record.last_updated, record.ipo_name,
-                    ),
+                changed = any(
+                    getattr(existing, f) != getattr(record, f)
+                    for f in self._COMPARABLE_FIELDS
                 )
+                if changed:
+                    conn.execute(
+                        """
+                        UPDATE ipo SET
+                            company_name = ?, ipo_type = ?, price_band = ?,
+                            lot_size = ?, issue_size = ?, open_date = ?,
+                            close_date = ?, listing_date = ?, allotment_date = ?,
+                            registrar = ?, exchange = ?, current_gmp = ?,
+                            gmp_change = ?, kostak = ?, subject_to_sauda = ?,
+                            source_url = ?, last_updated = ?
+                        WHERE ipo_name = ?
+                        """,
+                        (
+                            record.company_name, record.ipo_type, record.price_band,
+                            record.lot_size, record.issue_size, record.open_date,
+                            record.close_date, record.listing_date, record.allotment_date,
+                            record.registrar, record.exchange, record.current_gmp,
+                            record.gmp_change, record.kostak, record.subject_to_sauda,
+                            record.source_url, record.last_updated, record.ipo_name,
+                        ),
+                    )
+                else:
+                    record.last_updated = existing.last_updated
                 record.id = existing.id
                 record.created_at = existing.created_at
             else:
