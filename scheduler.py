@@ -152,9 +152,19 @@ class IPOMonitor:
     # Summaries
     # ------------------------------------------------------------------
     def _active_ipos(self) -> List[IPORecord]:
+        """IPOs still worth showing in a summary -- excludes anything whose
+        subscription window has already closed. Groww's Open/Upcoming
+        tables (our listing source) don't provide a listing_date, so
+        checking only listing_date would never catch an IPO that already
+        closed for subscription -- it would linger in every summary
+        forever. close_date is always populated, so that's the real
+        signal for "this isn't current news anymore".
+        """
         today = today_iso()
         active = []
         for record in self.db.list_ipos():
+            if record.close_date and record.close_date < today:
+                continue
             if record.listing_date and record.listing_date < today:
                 continue
             active.append(record)

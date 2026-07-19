@@ -101,10 +101,11 @@ class TelegramNotifier:
         gain_line = f" | Gain: {gain}%" if gain is not None else ""
         gmp_line = f"₹{record.current_gmp:g}" if record.current_gmp is not None else "N/A"
         return (
-            f"🚀 <b>NEW IPO: {record.company_name}</b> ({record.ipo_type or 'N/A'})\n"
+            f"🚀 <b>NEW IPO: {record.company_name}</b>\n"
+            f"{record.ipo_type or 'N/A'}\n\n"
             f"Price: {record.price_band or 'N/A'} | Lot: {record.lot_size or 'N/A'}\n"
-            f"GMP: {gmp_line}{gain_line}\n"
-            f"Open: {record.open_date or 'TBA'} → Close: {record.close_date or 'TBA'}\n"
+            f"GMP: {gmp_line}{gain_line}\n\n"
+            f"Open: {record.open_date or 'TBA'} → Close: {record.close_date or 'TBA'}\n\n"
             f"{record.source_url or ''}"
         ).strip()
 
@@ -116,7 +117,8 @@ class TelegramNotifier:
         old_gmp_line = f"₹{old_gmp:g}" if old_gmp is not None else "N/A"
         new_gmp_line = f"₹{new_gmp:g}" if new_gmp is not None else "N/A"
         return (
-            f"📈 <b>GMP UPDATE: {record.company_name}</b>\n"
+            f"📈 <b>GMP UPDATE</b>\n"
+            f"{record.company_name}\n\n"
             f"{old_gmp_line} → {new_gmp_line} ({sign}₹{diff:g})"
         )
 
@@ -132,23 +134,24 @@ class TelegramNotifier:
         if kind == "listing" and record.exchange:
             extra = f" | {record.exchange}"
         return (
-            f"{headers[kind]}: <b>{record.company_name}</b> ({record.ipo_type or 'N/A'})\n"
+            f"{headers[kind]}\n"
+            f"{record.company_name} ({record.ipo_type or 'N/A'})\n\n"
             f"Price: {record.price_band or 'N/A'}{gmp_line}{extra}"
         )
 
     def format_summary(self, records: List[IPORecord], title: str) -> str:
         if not records:
-            return f"{title}\nNo active IPOs right now."
+            return f"{title}\n\nNo active IPOs right now."
 
-        lines = [title]
+        lines = [title, ""]
         for r in records:
             gmp_line = f"₹{r.current_gmp:g}" if r.current_gmp is not None else "N/A"
             lines.append(
-                f"• <b>{r.company_name}</b> ({r.ipo_type or 'N/A'}) — "
-                f"{r.price_band or 'N/A'} | GMP {gmp_line} | "
+                f"• <b>{r.company_name}</b> ({r.ipo_type or 'N/A'})\n"
+                f"  {r.price_band or 'N/A'} | GMP {gmp_line} | "
                 f"{r.open_date or 'TBA'}→{r.close_date or 'TBA'}"
             )
-        return "\n".join(lines)
+        return "\n\n".join(lines)
 
     # ------------------------------------------------------------------
     # High level send helpers
