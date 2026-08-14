@@ -157,6 +157,13 @@ class Settings:
     enable_evening_summary: bool = field(
         default_factory=lambda: _get_bool("ENABLE_EVENING_SUMMARY", True)
     )
+    # When False (the default), the bot still scrapes/updates its database
+    # every poll cycle, but only actually messages Telegram at the two daily
+    # summary times -- no per-cycle new-IPO/GMP/milestone alerts. Set to
+    # true for instant real-time alerts in addition to the daily summaries.
+    enable_realtime_alerts: bool = field(
+        default_factory=lambda: _get_bool("ENABLE_REALTIME_ALERTS", False)
+    )
     timezone: str = field(default_factory=lambda: os.getenv("TIMEZONE", "Asia/Kolkata"))
 
     def validate(self) -> None:

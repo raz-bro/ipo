@@ -57,11 +57,16 @@ Every `POLL_INTERVAL_MINUTES` (default **10**), the bot:
    sends **one 📅 batch alert** covering every IPO reaching a milestone
    today (🟢 open / 🔴 close / 🎯 allotment / 📊 listing), each shown once.
 
-So a single poll cycle sends at most 3 Telegram messages total (new IPOs /
-GMP moves / today's milestones), no matter how many IPOs are involved --
-plus the twice-daily summary. Every alert also shows the minimum
-investment amount (lot size × price band's upper end) alongside the price
-and GMP, since that's usually the number investors actually want.
+By default (`ENABLE_REALTIME_ALERTS=false`), steps 3-5 above still run every
+cycle -- the database stays fully up to date -- but nothing gets sent to
+Telegram from them. **The bot only actually messages you twice a day**, at
+the morning/evening summary times, which report whatever's currently
+active. Set `ENABLE_REALTIME_ALERTS=true` to additionally get instant
+alerts the moment something happens: at most 3 extra messages per poll
+cycle (new IPOs / GMP moves / today's milestones), batched so every
+affected IPO is one message rather than one message per IPO. Every alert
+shows the minimum investment amount and expected profit (lot size × price,
+and GMP × lot size) alongside the price and GMP.
 
 The `notifications_sent` table records every alert that's gone out so nothing
 is ever sent twice, even across restarts.
@@ -352,6 +357,7 @@ later, periodically squash history or graduate to a VPS/Pi).
 | `MORNING_SUMMARY_TIME` | `08:00` | 24h HH:MM for the morning summary |
 | `EVENING_SUMMARY_TIME` | `20:00` | 24h HH:MM for the evening summary |
 | `ENABLE_MORNING_SUMMARY` / `ENABLE_EVENING_SUMMARY` | `true` | Toggle summaries |
+| `ENABLE_REALTIME_ALERTS` | `false` | `true` = also get instant alerts between summaries; `false` = only the twice-daily summaries |
 | `TIMEZONE` | `Asia/Kolkata` | Timezone used for scheduling |
 | `GMP_ABS_THRESHOLD` | `5` | Minimum ₹ change to trigger a GMP alert |
 | `GMP_PCT_THRESHOLD` | `5` | Minimum % change to trigger a GMP alert |

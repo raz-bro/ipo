@@ -83,11 +83,18 @@ class IPOMonitor:
             if gmp_event is not None:
                 gmp_changes.append(gmp_event)
 
-        self._send_new_ipo_batch(new_ipos)
-        self._send_gmp_change_batch(gmp_changes)
-
         milestone_events = self.check_milestones()
-        self._send_milestone_batch(milestone_events)
+
+        if settings.enable_realtime_alerts:
+            self._send_new_ipo_batch(new_ipos)
+            self._send_gmp_change_batch(gmp_changes)
+            self._send_milestone_batch(milestone_events)
+        elif new_ipos or gmp_changes or milestone_events:
+            logger.info(
+                "Real-time alerts disabled -- %d new IPO(s), %d GMP change(s), "
+                "%d milestone(s) this cycle will surface in the next daily summary instead",
+                len(new_ipos), len(gmp_changes), len(milestone_events),
+            )
 
         self.check_summaries()
         logger.info("Poll cycle complete (%d listings processed)", len(listings))
