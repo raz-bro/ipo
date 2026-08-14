@@ -395,6 +395,18 @@ def min_investment_amount(price_band: object, lot_size: object) -> Optional[int]
     return int(round(price_high * shares))
 
 
+def expected_profit_amount(gmp: Optional[float], lot_size: object) -> Optional[int]:
+    """Expected profit (in rupees) for one lot if it lists at the current
+    GMP -- GMP is itself the expected per-share listing gain, so this is
+    just GMP x lot size. Returns None if either input is missing/unparsable,
+    or if GMP is zero/negative (no expected gain to report).
+    """
+    shares = parse_lot_size(lot_size)
+    if not shares or gmp is None or gmp <= 0:
+        return None
+    return int(round(gmp * shares))
+
+
 def parse_lot_size_from_detail_page(html: str) -> Optional[int]:
     """Extract lot size (shares per lot) from an IPO detail page's body
     text. Tries a couple of patterns since exact wording/markup varies."""

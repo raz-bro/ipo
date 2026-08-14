@@ -14,7 +14,7 @@ import requests
 
 from config import settings
 from database import IPORecord
-from utils import logger, min_investment_amount, parse_price_band, retry
+from utils import expected_profit_amount, logger, min_investment_amount, parse_price_band, retry
 
 
 class TelegramNotifier:
@@ -104,6 +104,11 @@ class TelegramNotifier:
         amount = min_investment_amount(record.price_band, record.lot_size)
         return f" | Invest: ₹{amount:,}" if amount is not None else ""
 
+    @staticmethod
+    def _profit_line(record: IPORecord) -> str:
+        profit = expected_profit_amount(record.current_gmp, record.lot_size)
+        return f" | Profit: ₹{profit:,}" if profit is not None else ""
+
     def _new_ipo_line(self, record: IPORecord) -> str:
         gain = self._expected_listing_gain(record)
         gain_line = f" | Gain: {gain}%" if gain is not None else ""
@@ -112,8 +117,8 @@ class TelegramNotifier:
         return (
             f"• <b>{record.company_name}</b> ({record.ipo_type or 'N/A'})\n"
             f"  {record.price_band or 'N/A'}{lot_line}{self._investment_line(record)}\n"
-            f"  GMP: {gmp_line}{gain_line} | "
-            f"{record.open_date or 'TBA'}→{record.close_date or 'TBA'}"
+            f"  GMP: {gmp_line}{gain_line}{self._profit_line(record)}\n"
+            f"  {record.open_date or 'TBA'}→{record.close_date or 'TBA'}"
         )
 
     def format_new_ipos_batch(self, records: List[IPORecord]) -> str:
@@ -158,7 +163,7 @@ class TelegramNotifier:
             gmp_line = f"₹{r.current_gmp:g}" if r.current_gmp is not None else "N/A"
             lines.append(
                 f"• <b>{r.company_name}</b> ({r.ipo_type or 'N/A'})\n"
-                f"  {r.price_band or 'N/A'}{self._investment_line(r)} | GMP {gmp_line}\n"
+                f"  {r.price_band or 'N/A'}{self._investment_line(r)} | GMP {gmp_line}{self._profit_line(r)}\n"
                 f"  {r.open_date or 'TBA'}→{r.close_date or 'TBA'}"
             )
         return "\n\n".join(lines)
