@@ -109,15 +109,35 @@ class TelegramNotifier:
         profit = expected_profit_amount(record.current_gmp, record.lot_size)
         return f" | Profit: ₹{profit:,}" if profit is not None else ""
 
-    def _new_ipo_line(self, record: IPORecord) -> str:
+    @staticmethod
+    def _star_rating(gain_pct: Optional[float]) -> str:
+        """Star rating for how attractive an IPO's expected listing gain
+        looks, purely a quick-glance visual cue -- not financial advice."""
+        if gain_pct is None or gain_pct <= 0:
+            return ""
+        if gain_pct < 10:
+            return " ⭐"
+        if gain_pct < 25:
+            return " ⭐⭐"
+        if gain_pct < 50:
+            return " ⭐⭐⭐"
+        if gain_pct < 75:
+            return " ⭐⭐⭐⭐"
+        return " ⭐⭐⭐⭐⭐"
+
+    def _gain_line(self, record: IPORecord) -> str:
         gain = self._expected_listing_gain(record)
-        gain_line = f" | Gain: {gain}%" if gain is not None else ""
+        if gain is None:
+            return ""
+        return f" | Gain: {gain}%{self._star_rating(gain)}"
+
+    def _new_ipo_line(self, record: IPORecord) -> str:
         gmp_line = f"₹{record.current_gmp:g}" if record.current_gmp is not None else "N/A"
         lot_line = f" | Lot: {record.lot_size}" if record.lot_size else ""
         return (
             f"• <b>{record.company_name}</b> ({record.ipo_type or 'N/A'})\n"
             f"  {record.price_band or 'N/A'}{lot_line}{self._investment_line(record)}\n"
-            f"  GMP: {gmp_line}{gain_line}{self._profit_line(record)}\n"
+            f"  GMP: {gmp_line}{self._gain_line(record)}{self._profit_line(record)}\n"
             f"  {record.open_date or 'TBA'}→{record.close_date or 'TBA'}"
         )
 
@@ -163,7 +183,8 @@ class TelegramNotifier:
             gmp_line = f"₹{r.current_gmp:g}" if r.current_gmp is not None else "N/A"
             lines.append(
                 f"• <b>{r.company_name}</b> ({r.ipo_type or 'N/A'})\n"
-                f"  {r.price_band or 'N/A'}{self._investment_line(r)} | GMP {gmp_line}{self._profit_line(r)}\n"
+                f"  {r.price_band or 'N/A'}{self._investment_line(r)} | GMP {gmp_line}"
+                f"{self._gain_line(r)}{self._profit_line(r)}\n"
                 f"  {r.open_date or 'TBA'}→{r.close_date or 'TBA'}"
             )
         return "\n\n".join(lines)
