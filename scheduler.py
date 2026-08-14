@@ -5,12 +5,16 @@ decide what to notify" logic. ``build_scheduler`` wires its methods up to
 APScheduler jobs at the configured intervals. Keeping the decision logic in
 a plain class (rather than free functions bound directly to the scheduler)
 makes it straightforward to unit test independently of APScheduler.
+
+Notifications are batched: each poll cycle sends at most one message per
+category (new IPOs / GMP moves / today's milestones) covering every
+affected IPO, rather than firing a separate Telegram message per IPO.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List
+from typing import List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -23,8 +27,8 @@ from scraper import IPOScraper
 from telegram import TelegramNotifier
 from utils import logger, today_iso
 
-# Milestone notification types are sent at most once per IPO.
-_MILESTONE_TYPES = ("open", "close", "allotment", "listing")
+GmpChangeEvent = Tuple[IPORecord, Optional[float], Optional[float]]
+MilestoneEvent = Tuple[IPORecord, str]
 
 
 class IPOMonitor:
@@ -46,7 +50,12 @@ class IPOMonitor:
     # Core 10-minute cycle
     # ------------------------------------------------------------------
     def run_cycle(self) -> None:
-        """One full poll cycle: refresh IPO listings + GMP, notify on change."""
+        """One full poll cycle: refresh IPO listings + GMP, notify on change.
+
+        Every affected IPO within a category is batched into a single
+        Telegram message for that category, sent once at the end of the
+        cycle -- not one message per IPO as things are discovered.
+        """
         logger.info("Starting IPO/GMP poll cycle")
         try:
             listings = self.ipo_scraper.fetch_all()
@@ -60,17 +69,32 @@ class IPOMonitor:
             logger.exception("Unhandled error while scraping GMP data")
             gmp_quotes = []
 
+        new_ipos: List[IPORecord] = []
+        gmp_changes: List[GmpChangeEvent] = []
+
         for listing in listings:
             try:
-                self._process_listing(listing, gmp_quotes)
+                new_record, gmp_event = self._process_listing(listing, gmp_quotes)
             except Exception:
                 logger.exception("Failed processing listing %s", listing.ipo_name)
+                continue
+            if new_record is not None:
+                new_ipos.append(new_record)
+            if gmp_event is not None:
+                gmp_changes.append(gmp_event)
 
-        self.check_milestones()
+        self._send_new_ipo_batch(new_ipos)
+        self._send_gmp_change_batch(gmp_changes)
+
+        milestone_events = self.check_milestones()
+        self._send_milestone_batch(milestone_events)
+
         self.check_summaries()
         logger.info("Poll cycle complete (%d listings processed)", len(listings))
 
-    def _process_listing(self, listing: IPORecord, gmp_quotes: list) -> None:
+    def _process_listing(
+        self, listing: IPORecord, gmp_quotes: list
+    ) -> "tuple[Optional[IPORecord], Optional[GmpChangeEvent]]":
         existing = self.db.get_ipo_by_name(listing.ipo_name)
         is_new = existing is None
 
@@ -97,24 +121,24 @@ class IPOMonitor:
         if is_new:
             logger.info("New IPO detected: %s", record.company_name)
             self.db.add_gmp_history(record.id, record.current_gmp, record.kostak, record.subject_to_sauda)
-            if self.notifier.notify_new_ipo(record):
-                self.db.record_notification(record.id, "new_ipo")
-            return
+            return record, None
 
-        self._maybe_notify_gmp_change(record, previous_gmp)
+        return None, self._check_gmp_change(record, previous_gmp)
 
-    def _maybe_notify_gmp_change(self, record: IPORecord, previous_gmp) -> None:
+    def _check_gmp_change(
+        self, record: IPORecord, previous_gmp: Optional[float]
+    ) -> Optional[GmpChangeEvent]:
         if record.current_gmp is None:
-            return
+            return None
         if previous_gmp is None:
             self.db.add_gmp_history(record.id, record.current_gmp, record.kostak, record.subject_to_sauda)
-            return
+            return None
 
         diff = abs(record.current_gmp - previous_gmp)
         pct = (diff / previous_gmp * 100) if previous_gmp else 0
 
         if diff == 0:
-            return
+            return None
 
         self.db.add_gmp_history(record.id, record.current_gmp, record.kostak, record.subject_to_sauda)
 
@@ -123,30 +147,56 @@ class IPOMonitor:
                 "GMP change for %s: %s -> %s (diff=%.2f, pct=%.1f%%)",
                 record.company_name, previous_gmp, record.current_gmp, diff, pct,
             )
-            if self.notifier.notify_gmp_update(record, previous_gmp, record.current_gmp):
+            return record, previous_gmp, record.current_gmp
+        return None
+
+    def _send_new_ipo_batch(self, new_ipos: List[IPORecord]) -> None:
+        if not new_ipos:
+            return
+        if self.notifier.notify_new_ipos(new_ipos):
+            for record in new_ipos:
+                self.db.record_notification(record.id, "new_ipo")
+            logger.info("Sent new-IPO batch alert covering %d IPO(s)", len(new_ipos))
+
+    def _send_gmp_change_batch(self, gmp_changes: List[GmpChangeEvent]) -> None:
+        if not gmp_changes:
+            return
+        if self.notifier.notify_gmp_updates(gmp_changes):
+            for record, old_gmp, new_gmp in gmp_changes:
                 self.db.record_notification(
-                    record.id, "gmp_update", details=f"{previous_gmp}->{record.current_gmp}"
+                    record.id, "gmp_update", details=f"{old_gmp}->{new_gmp}"
                 )
+            logger.info("Sent GMP-update batch alert covering %d IPO(s)", len(gmp_changes))
+
+    def _send_milestone_batch(self, events: List[MilestoneEvent]) -> None:
+        if not events:
+            return
+        if self.notifier.notify_milestones(events):
+            for record, kind in events:
+                self.db.record_notification(record.id, kind)
+            logger.info("Sent milestone batch alert covering %d event(s)", len(events))
 
     # ------------------------------------------------------------------
     # Date-driven milestone alerts
     # ------------------------------------------------------------------
-    def check_milestones(self) -> None:
+    def check_milestones(self) -> List[MilestoneEvent]:
         today = today_iso()
+        events: List[MilestoneEvent] = []
         for record in self.db.list_ipos():
-            self._check_milestone(record, "open", record.open_date, today)
-            self._check_milestone(record, "close", record.close_date, today)
-            self._check_milestone(record, "allotment", record.allotment_date, today)
-            self._check_milestone(record, "listing", record.listing_date, today)
+            events += self._collect_milestone(record, "open", record.open_date, today)
+            events += self._collect_milestone(record, "close", record.close_date, today)
+            events += self._collect_milestone(record, "allotment", record.allotment_date, today)
+            events += self._collect_milestone(record, "listing", record.listing_date, today)
+        return events
 
-    def _check_milestone(self, record: IPORecord, kind: str, date_value, today: str) -> None:
+    def _collect_milestone(
+        self, record: IPORecord, kind: str, date_value: Optional[str], today: str
+    ) -> List[MilestoneEvent]:
         if not date_value or date_value != today:
-            return
+            return []
         if self.db.has_notification(record.id, kind):
-            return
-        if self.notifier.notify_status(record, kind):
-            self.db.record_notification(record.id, kind)
-            logger.info("Sent '%s' milestone alert for %s", kind, record.company_name)
+            return []
+        return [(record, kind)]
 
     # ------------------------------------------------------------------
     # Summaries

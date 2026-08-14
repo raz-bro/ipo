@@ -23,6 +23,7 @@ if a source goes permanently stale.
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Sequence
 
 import pandas as pd
@@ -40,6 +41,7 @@ from utils import (
     logger,
     now_iso,
     parse_flexible_date,
+    parse_lot_size_from_detail_page,
 )
 
 # Keyword groups used to identify Chittorgarh's single IPO table on a page.
@@ -152,7 +154,38 @@ class IPOScraper:
                 record = self._row_to_record(row, column_map, "Mainboard", url)
                 if record is not None:
                     records.append(record)
+
+        if records:
+            self._fill_lot_sizes_from_detail_pages(records)
         return records
+
+    @staticmethod
+    def _fill_lot_sizes_from_detail_pages(records: List[IPORecord]) -> None:
+        """Groww's listing table doesn't include lot size, but each IPO's
+        own detail page does, at a predictable URL: groww.in/ipo/{slug}-ipo
+        where {slug} is the company name, lowercased and hyphenated (e.g.
+        "Shiprocket" -> shiprocket-ipo, "ENS Enterprises" -> ens-enterprises-ipo).
+
+        This is a heuristic, not a guarantee -- company names with unusual
+        punctuation (e.g. "Q&T Foods") or a slug that doesn't just follow
+        the name (observed for a few IPOs) will 404 and are simply skipped;
+        that IPO's lot size (and derived min-investment figure) stays blank
+        rather than blocking the rest of the cycle.
+        """
+        for record in records:
+            slug = re.sub(r"[^a-z0-9]+", "-", record.company_name.lower()).strip("-")
+            detail_url = f"{settings.groww_ipo_url.rstrip('/')}/{slug}-ipo"
+            try:
+                detail_html = fetch_html(detail_url)
+                lot_size = parse_lot_size_from_detail_page(detail_html)
+            except (FetchError, Exception) as exc:  # noqa: BLE001
+                logger.debug(
+                    "Could not fetch lot size for %s from %s: %s",
+                    record.company_name, detail_url, exc,
+                )
+                continue
+            if lot_size:
+                record.lot_size = f"{lot_size} Shares"
 
     # ------------------------------------------------------------------
     # Chittorgarh (secondary -- best-effort, known to be blocked at times)

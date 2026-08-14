@@ -18,6 +18,7 @@ from typing import Callable, Dict, List, Optional, Sequence, TypeVar
 
 import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 
 from config import settings
 
@@ -215,20 +216,30 @@ def _get_session() -> requests.Session:
 
 
 class FetchError(Exception):
-    """Raised when a URL cannot be fetched after all retries."""
+    """Raised for retryable fetch failures (5xx, 429, other non-404 errors)."""
+
+
+class NotFoundError(Exception):
+    """Raised for HTTP 404. Deliberately NOT retried -- a 404 means the URL
+    doesn't exist, which retrying can't fix (unlike a transient 5xx/timeout).
+    Callers that guess URLs (e.g. a heuristic detail-page slug) should catch
+    this alongside FetchError and treat it as "no data available"."""
 
 
 @retry(exceptions=(requests.RequestException, FetchError))
 def fetch_html(url: str, timeout: Optional[int] = None) -> str:
     """GET a URL and return its response body as text, with retries.
 
-    Raises FetchError on non-2xx responses (including 429 rate limiting,
-    which is treated like any other transient failure and retried) and
-    requests.RequestException on network-level failures (timeouts, DNS,
-    connection refused, etc.).
+    Raises NotFoundError (not retried) on HTTP 404, FetchError (retried) on
+    other non-2xx responses including 429 rate limiting, and
+    requests.RequestException (retried) on network-level failures (timeouts,
+    DNS, connection refused, etc.).
     """
     session = _get_session()
     response = session.get(url, timeout=timeout or settings.request_timeout)
+
+    if response.status_code == 404:
+        raise NotFoundError(f"HTTP 404 fetching {url}")
 
     if response.status_code == 429:
         retry_after = response.headers.get("Retry-After", "5")
@@ -356,6 +367,48 @@ def parse_price_band(text: object) -> "tuple[Optional[float], Optional[float]]":
         val = float(numbers[0])
         return val, val
     return float(numbers[0]), float(numbers[-1])
+
+
+def parse_lot_size(text: object) -> Optional[int]:
+    """Extract the number of shares from a lot size string like
+    '44 Shares' or '266'. Returns None if it can't be parsed."""
+    clean = clean_text(text)
+    match = re.search(r"\d[\d,]*", clean)
+    if not match:
+        return None
+    try:
+        return int(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def min_investment_amount(price_band: object, lot_size: object) -> Optional[int]:
+    """Minimum money needed to apply for one lot -- lot size (shares) times
+    the upper end of the price band. This is the number retail investors
+    actually look for ("how much do I need to apply"), not just the price
+    or lot size in isolation. Returns None if either input can't be parsed.
+    """
+    _, price_high = parse_price_band(price_band)
+    shares = parse_lot_size(lot_size)
+    if not price_high or not shares:
+        return None
+    return int(round(price_high * shares))
+
+
+def parse_lot_size_from_detail_page(html: str) -> Optional[int]:
+    """Extract lot size (shares per lot) from an IPO detail page's body
+    text. Tries a couple of patterns since exact wording/markup varies."""
+    text = BeautifulSoup(html, "lxml").get_text(" ", strip=True)
+
+    match = re.search(r"lot\s*size\D{0,10}(\d[\d,]*)", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1).replace(",", ""))
+
+    match = re.search(r"₹\s*[\d,]+\s*/\s*(\d[\d,]*)\s*shares?", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1).replace(",", ""))
+
+    return None
 
 
 def build_column_map(

@@ -38,18 +38,30 @@ Every `POLL_INTERVAL_MINUTES` (default **10**), the bot:
 
 1. Scrapes the latest Mainboard + SME IPO lists from Groww (confirmed
    reachable; Chittorgarh is also attempted and merged in, but is
-   currently blocked by anti-bot protection -- see note below).
+   currently blocked by anti-bot protection -- see note below). Each new
+   IPO's lot size is looked up from its individual Groww detail page
+   (best-effort -- the listing page itself doesn't include lot size).
 2. Scrapes the latest GMP table from IPO Watch (falls back to InvestorGain
    if that fails; InvestorGain is currently blocked -- see note below).
-3. Upserts each IPO into the `ipo` table. A row that didn't exist before
-   triggers a **🚀 NEW IPO DETECTED** alert.
+3. Upserts each IPO into the `ipo` table. Every row that didn't exist
+   before is collected and sent as **one 🚀 NEW IPO batch alert** covering
+   all of them -- not a separate message per IPO.
 4. Matches each IPO to its GMP quote (fuzzy name matching, since sources
    spell company names slightly differently) and compares it to the
-   previously stored value. If it moved by at least `GMP_ABS_THRESHOLD`
-   rupees **or** `GMP_PCT_THRESHOLD` percent, sends a **📈 GMP UPDATED**
-   alert and logs the reading to `gmp_history`.
+   previously stored value. Every IPO that moved by at least
+   `GMP_ABS_THRESHOLD` rupees **or** `GMP_PCT_THRESHOLD` percent is
+   collected and sent as **one 📈 GMP UPDATE batch alert**, and every
+   reading is logged to `gmp_history` regardless of whether it crossed the
+   alert threshold.
 5. Checks every IPO's open/close/allotment/listing dates against today and
-   sends the matching one-time milestone alert (🟢/🔴/🎯/📊).
+   sends **one 📅 batch alert** covering every IPO reaching a milestone
+   today (🟢 open / 🔴 close / 🎯 allotment / 📊 listing), each shown once.
+
+So a single poll cycle sends at most 3 Telegram messages total (new IPOs /
+GMP moves / today's milestones), no matter how many IPOs are involved --
+plus the twice-daily summary. Every alert also shows the minimum
+investment amount (lot size × price band's upper end) alongside the price
+and GMP, since that's usually the number investors actually want.
 
 The `notifications_sent` table records every alert that's gone out so nothing
 is ever sent twice, even across restarts.

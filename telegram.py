@@ -14,7 +14,7 @@ import requests
 
 from config import settings
 from database import IPORecord
-from utils import logger, parse_price_band, retry
+from utils import logger, min_investment_amount, parse_price_band, retry
 
 
 class TelegramNotifier:
@@ -87,7 +87,10 @@ class TelegramNotifier:
         return True
 
     # ------------------------------------------------------------------
-    # Message formatting
+    # Message formatting -- everything is batched: at most one message per
+    # category per poll cycle (new IPOs / GMP moves / today's milestones),
+    # listing every affected IPO in that one message rather than firing a
+    # separate message per IPO.
     # ------------------------------------------------------------------
     @staticmethod
     def _expected_listing_gain(record: IPORecord) -> Optional[float]:
@@ -96,76 +99,90 @@ class TelegramNotifier:
             return None
         return round((record.current_gmp / high) * 100, 1)
 
-    def format_new_ipo(self, record: IPORecord) -> str:
+    @staticmethod
+    def _investment_line(record: IPORecord) -> str:
+        amount = min_investment_amount(record.price_band, record.lot_size)
+        return f" | Invest: ₹{amount:,}" if amount is not None else ""
+
+    def _new_ipo_line(self, record: IPORecord) -> str:
         gain = self._expected_listing_gain(record)
         gain_line = f" | Gain: {gain}%" if gain is not None else ""
         gmp_line = f"₹{record.current_gmp:g}" if record.current_gmp is not None else "N/A"
+        lot_line = f" | Lot: {record.lot_size}" if record.lot_size else ""
         return (
-            f"🚀 <b>NEW IPO: {record.company_name}</b>\n"
-            f"{record.ipo_type or 'N/A'}\n\n"
-            f"Price: {record.price_band or 'N/A'} | Lot: {record.lot_size or 'N/A'}\n"
-            f"GMP: {gmp_line}{gain_line}\n\n"
-            f"Open: {record.open_date or 'TBA'} → Close: {record.close_date or 'TBA'}\n\n"
-            f"{record.source_url or ''}"
-        ).strip()
+            f"• <b>{record.company_name}</b> ({record.ipo_type or 'N/A'})\n"
+            f"  {record.price_band or 'N/A'}{lot_line}{self._investment_line(record)}\n"
+            f"  GMP: {gmp_line}{gain_line} | "
+            f"{record.open_date or 'TBA'}→{record.close_date or 'TBA'}"
+        )
 
-    def format_gmp_update(
-        self, record: IPORecord, old_gmp: Optional[float], new_gmp: Optional[float]
+    def format_new_ipos_batch(self, records: List[IPORecord]) -> str:
+        title = f"🚀 <b>{len(records)} NEW IPO{'s' if len(records) != 1 else ''}</b>"
+        lines = [title] + [self._new_ipo_line(r) for r in records]
+        return "\n\n".join(lines)
+
+    def format_gmp_updates_batch(
+        self, events: List["tuple[IPORecord, Optional[float], Optional[float]]"]
     ) -> str:
-        diff = (new_gmp or 0) - (old_gmp or 0)
-        sign = "+" if diff >= 0 else ""
-        old_gmp_line = f"₹{old_gmp:g}" if old_gmp is not None else "N/A"
-        new_gmp_line = f"₹{new_gmp:g}" if new_gmp is not None else "N/A"
-        return (
-            f"📈 <b>GMP UPDATE</b>\n"
-            f"{record.company_name}\n\n"
-            f"{old_gmp_line} → {new_gmp_line} ({sign}₹{diff:g})"
-        )
+        title = f"📈 <b>GMP UPDATE ({len(events)})</b>"
+        lines = [title]
+        for record, old_gmp, new_gmp in events:
+            diff = (new_gmp or 0) - (old_gmp or 0)
+            sign = "+" if diff >= 0 else ""
+            old_line = f"₹{old_gmp:g}" if old_gmp is not None else "N/A"
+            new_line = f"₹{new_gmp:g}" if new_gmp is not None else "N/A"
+            lines.append(
+                f"• <b>{record.company_name}</b>: {old_line} → {new_line} ({sign}₹{diff:g})"
+            )
+        return "\n\n".join(lines)
 
-    def format_status_alert(self, record: IPORecord, kind: str) -> str:
-        headers = {
-            "open": "🟢 <b>OPEN TODAY</b>",
-            "close": "🔴 <b>CLOSES TODAY</b>",
-            "allotment": "🎯 <b>ALLOTMENT TODAY</b>",
-            "listing": "📊 <b>LISTING TODAY</b>",
-        }
-        gmp_line = f" | GMP: ₹{record.current_gmp:g}" if record.current_gmp is not None else ""
-        extra = ""
-        if kind == "listing" and record.exchange:
-            extra = f" | {record.exchange}"
-        return (
-            f"{headers[kind]}\n"
-            f"{record.company_name} ({record.ipo_type or 'N/A'})\n\n"
-            f"Price: {record.price_band or 'N/A'}{gmp_line}{extra}"
-        )
+    def format_milestones_batch(self, events: List["tuple[IPORecord, str]"]) -> str:
+        emojis = {"open": "🟢", "close": "🔴", "allotment": "🎯", "listing": "📊"}
+        labels = {"open": "Open", "close": "Closes", "allotment": "Allotment", "listing": "Listing"}
+        title = "📅 <b>TODAY'S IPO EVENTS</b>"
+        lines = [title]
+        for record, kind in events:
+            gmp_line = f" | GMP: ₹{record.current_gmp:g}" if record.current_gmp is not None else ""
+            lines.append(
+                f"{emojis[kind]} <b>{labels[kind]}: {record.company_name}</b> "
+                f"({record.ipo_type or 'N/A'}) — {record.price_band or 'N/A'}{gmp_line}"
+            )
+        return "\n\n".join(lines)
 
     def format_summary(self, records: List[IPORecord], title: str) -> str:
         if not records:
             return f"{title}\n\nNo active IPOs right now."
 
-        lines = [title, ""]
+        lines = [title]
         for r in records:
             gmp_line = f"₹{r.current_gmp:g}" if r.current_gmp is not None else "N/A"
             lines.append(
                 f"• <b>{r.company_name}</b> ({r.ipo_type or 'N/A'})\n"
-                f"  {r.price_band or 'N/A'} | GMP {gmp_line} | "
-                f"{r.open_date or 'TBA'}→{r.close_date or 'TBA'}"
+                f"  {r.price_band or 'N/A'}{self._investment_line(r)} | GMP {gmp_line}\n"
+                f"  {r.open_date or 'TBA'}→{r.close_date or 'TBA'}"
             )
         return "\n\n".join(lines)
 
     # ------------------------------------------------------------------
-    # High level send helpers
+    # High level send helpers -- one call, one message, covering every
+    # affected IPO in the batch.
     # ------------------------------------------------------------------
-    def notify_new_ipo(self, record: IPORecord) -> bool:
-        return self.send_message(self.format_new_ipo(record))
+    def notify_new_ipos(self, records: List[IPORecord]) -> bool:
+        if not records:
+            return True
+        return self.send_message(self.format_new_ipos_batch(records))
 
-    def notify_gmp_update(
-        self, record: IPORecord, old_gmp: Optional[float], new_gmp: Optional[float]
+    def notify_gmp_updates(
+        self, events: List["tuple[IPORecord, Optional[float], Optional[float]]"]
     ) -> bool:
-        return self.send_message(self.format_gmp_update(record, old_gmp, new_gmp))
+        if not events:
+            return True
+        return self.send_message(self.format_gmp_updates_batch(events))
 
-    def notify_status(self, record: IPORecord, kind: str) -> bool:
-        return self.send_message(self.format_status_alert(record, kind))
+    def notify_milestones(self, events: List["tuple[IPORecord, str]"]) -> bool:
+        if not events:
+            return True
+        return self.send_message(self.format_milestones_batch(events))
 
     def notify_summary(self, records: List[IPORecord], title: str) -> bool:
         return self.send_message(self.format_summary(records, title))
